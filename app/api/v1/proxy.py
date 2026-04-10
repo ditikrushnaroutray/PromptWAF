@@ -1,20 +1,22 @@
-from fastapi import APIRouter, Request, HTTPException
+from fastapi import APIRouter, Request, HTTPException, Depends
 from fastapi.responses import JSONResponse
+from sqlalchemy.orm import Session
 from app.services.waf_engine import analyze_prompt
 from app.services.openai_client import forward_to_openai
+from app.core.security import verify_api_key, limiter
+from app.db.models import ApiKey
 
 router = APIRouter()
 
 @router.post("/v1/chat/completions")
-async def chat_completions(request: Request):
+@limiter.limit("50/minute")
+async def chat_completions(
+    request: Request,
+    api_key: ApiKey = Depends(verify_api_key)
+):
     """
-    Mirrors the OpenAI API signature. Validates auth, runs WAF engine, and forwards payload.
+    Mirrors the OpenAI API signature. Validates DB auth, runs WAF engine, applies rate limiting, and forwards payload.
     """
-    # Hardcoded token check
-    auth_header = request.headers.get("Authorization")
-    if auth_header != "Bearer pwaf_test_123":
-        raise HTTPException(status_code=401, detail="Unauthorized")
-
     try:
         payload = await request.json()
     except Exception:
