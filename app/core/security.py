@@ -1,5 +1,6 @@
 import os
 import secrets
+import logging
 from fastapi import Request, HTTPException, Security, Depends
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
@@ -8,12 +9,13 @@ from slowapi import Limiter
 from slowapi.util import get_remote_address
 from app.db.session import get_db
 from app.db.models import ApiKey
+from app.core.config import REDIS_URL
+
+_logger = logging.getLogger("promptwaf.security")
 
 # Password hashing context
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
-# Fallback to memory if Redis is not configured
-REDIS_URL = os.environ.get("REDIS_URL", "memory://")
 
 def get_key_identifier(request: Request) -> str:
     """Identify the user by their API key if present, otherwise by IP address."""
@@ -22,9 +24,17 @@ def get_key_identifier(request: Request) -> str:
         return auth_header.split(" ")[1]
     return get_remote_address(request)
 
+# Distributed rate limiter — uses Redis when REDIS_URL is set, otherwise
+# falls back to in-memory storage. In multi-node deployments, all instances
+# MUST point to the same Redis to share rate-limit counters.
 limiter = Limiter(
     key_func=get_key_identifier,
-    storage_uri=REDIS_URL
+    storage_uri=REDIS_URL,
+)
+
+_logger.info(
+    f"Rate limiter initialized with backend: "
+    f"{'Redis (' + REDIS_URL + ')' if REDIS_URL != 'memory://' else 'in-memory (single-node only)'}"
 )
 
 security_scheme = HTTPBearer()

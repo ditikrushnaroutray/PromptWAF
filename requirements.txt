@@ -8,3 +8,4 @@ passlib[bcrypt]
 slowapi
 redis
 limits
+scikit-learn
