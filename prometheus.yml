@@ -1,0 +1,22 @@
+# =============================================================================
+# Prometheus Configuration for PromptWAF
+# =============================================================================
+# Scrapes the /metrics endpoint from the PromptWAF proxy every 15 seconds.
+# Add alerting rules as needed for production monitoring.
+# =============================================================================
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  scrape_timeout: 10s
+
+scrape_configs:
+  # PromptWAF application metrics
+  - job_name: "promptwaf"
+    metrics_path: "/metrics"
+    scheme: "http"
+    static_configs:
+      - targets: ["prompt-waf:8000"]
+        labels:
+          service: "promptwaf"
+          environment: "production"

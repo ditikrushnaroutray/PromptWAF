@@ -1,6 +1,7 @@
 # Environments
 .env
 .env.*
+!.env.example
 venv/
 env/
 .venv/
@@ -18,4 +19,12 @@ __pycache__/
 
 # Logs and Databases
 *.sqlite3
+*.db
 *.log
+
+# Docker data
+prometheus-data/
+redis-data/
+
+# Testing
+.pytest_cache/
