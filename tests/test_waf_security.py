@@ -8,8 +8,7 @@ Tests cover:
     4. Integration (proxy behavior)
 """
 
-import asyncio
-import json
+
 import pytest
 import sys
 import os

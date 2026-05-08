@@ -14,9 +14,7 @@ Usage:
     pytest tests/security/test_payloads.py -v --tb=short
 """
 
-import asyncio
 import json
-import os
 import sys
 from pathlib import Path
 

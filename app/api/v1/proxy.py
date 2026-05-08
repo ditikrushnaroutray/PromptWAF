@@ -11,19 +11,20 @@ Every request flows through:
     6. Security headers on all responses
 """
 
-import time
 import uuid
 
 from fastapi import APIRouter, Request, HTTPException, Depends
 from fastapi.responses import JSONResponse, StreamingResponse
+from sqlalchemy.orm import Session
 
 from app.services.waf_engine import analyze_prompt, WafVerdict, _extract_system_prompt
 from app.services.openai_client import forward_to_openai
 from app.core.security import verify_api_key, limiter
-from app.core.config import PROTECTED_SYSTEM_PROMPT, WAF_MODE, WafMode, RATE_LIMIT_STRING, WAF_VERSION
-from app.core.logging_config import get_security_logger, log_waf_decision
+from app.core.config import PROTECTED_SYSTEM_PROMPT, WAF_MODE, WafMode, RATE_LIMIT_STRING
+from app.core.logging_config import get_security_logger, log_waf_decision, truncate_for_log
 from app.core.metrics import waf_metrics, LatencyTimer
-from app.db.models import ApiKey
+from app.db.models import ApiKey, WafLog
+from app.db.session import get_db
 
 router = APIRouter()
 logger = get_security_logger()
@@ -98,6 +99,7 @@ def _add_security_headers(
 async def chat_completions(
     request: Request,
     api_key: ApiKey = Depends(verify_api_key),
+    db: Session = Depends(get_db),
 ):
     """
     Mirrors the OpenAI API signature. Validates DB auth, runs multi-layer
@@ -166,6 +168,38 @@ async def chat_completions(
     if verdict.normalization:
         original_prompt = verdict.normalization.original
         normalized_prompt = verdict.normalization.normalized
+
+    # --- Persist to DB for dashboard ---
+    if verdict.blocked:
+        if is_shadow:
+            action_label = "MONITOR"
+        else:
+            action_label = "BLOCK"
+    else:
+        action_label = "ALLOW"
+
+    threat_score = verdict.confidence
+    if verdict.similarity_score is not None:
+        threat_score = max(threat_score, verdict.similarity_score)
+
+    try:
+        db_log = WafLog(
+            request_id=request_id,
+            source_ip=source_ip,
+            action=action_label,
+            layer=verdict.layer,
+            reason=verdict.reason,
+            confidence=verdict.confidence,
+            threat_score=round(threat_score, 3),
+            payload_preview=truncate_for_log(original_prompt, max_len=120),
+            pattern_label=verdict.pattern_label,
+            latency_ms=latency_ms,
+            waf_mode=WAF_MODE.value,
+        )
+        db.add(db_log)
+        db.commit()
+    except Exception as exc:
+        logger.error(f"Failed to persist WAF log: {exc}")
 
     log_waf_decision(
         logger,
