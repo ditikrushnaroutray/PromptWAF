@@ -9,3 +9,4 @@ slowapi
 redis
 limits
 scikit-learn
+email-validator
