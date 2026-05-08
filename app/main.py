@@ -1,5 +1,10 @@
+import pathlib
 from contextlib import asynccontextmanager
+
 from fastapi import FastAPI, Request, Response
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
@@ -7,11 +12,26 @@ from starlette.middleware.base import BaseHTTPMiddleware
 
 from app.api.v1.proxy import router as proxy_router
 from app.api.v1.keys import router as keys_router
+from app.api.v1.logs import router as logs_router
 from app.db.models import init_db
 from app.core.security import limiter
 from app.core.logging_config import setup_logging, get_security_logger
 from app.core.config import WAF_MODE, WAF_VERSION, REDIS_URL
 from app.core.metrics import waf_metrics
+
+
+# ---------------------------------------------------------------------------
+# Paths — resolve relative to this file so Docker WORKDIR doesn't matter
+# ---------------------------------------------------------------------------
+_BASE_DIR = pathlib.Path(__file__).resolve().parent
+_TEMPLATES_DIR = _BASE_DIR / "frontend" / "templates"
+_STATIC_DIR = _BASE_DIR / "frontend" / "static"
+
+
+# ---------------------------------------------------------------------------
+# Jinja2 Templates
+# ---------------------------------------------------------------------------
+templates = Jinja2Templates(directory=str(_TEMPLATES_DIR))
 
 
 # ---------------------------------------------------------------------------
@@ -73,6 +93,15 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# CORS Middleware — allow dashboard frontend to talk to API
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 # Security Headers Middleware (outermost layer)
 app.add_middleware(SecurityHeadersMiddleware)
 
@@ -81,9 +110,37 @@ app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 app.add_middleware(SlowAPIMiddleware)
 
+# Mount static files
+app.mount("/static", StaticFiles(directory=str(_STATIC_DIR)), name="static")
+
 # Include Routers
 app.include_router(proxy_router)
 app.include_router(keys_router)
+app.include_router(logs_router)
+
+
+# ---------------------------------------------------------------------------
+# Dashboard & Frontend Routes
+# ---------------------------------------------------------------------------
+
+@app.get("/", include_in_schema=False)
+async def index(request: Request):
+    """Serve the landing page."""
+    return templates.TemplateResponse("index.html", {
+        "request": request,
+        "version": WAF_VERSION,
+        "mode": WAF_MODE.value,
+    })
+
+
+@app.get("/dashboard", include_in_schema=False)
+async def dashboard(request: Request):
+    """Serve the security operations dashboard."""
+    return templates.TemplateResponse("dashboard.html", {
+        "request": request,
+        "version": WAF_VERSION,
+        "mode": WAF_MODE.value,
+    })
 
 
 # ---------------------------------------------------------------------------
