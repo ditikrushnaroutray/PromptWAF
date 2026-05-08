@@ -1,0 +1,364 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="PromptWAF Security Operations Dashboard — Real-time threat monitoring for LLM API firewall." />
+    <title>PromptWAF — Security Operations Dashboard</title>
+
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet" />
+
+    <!-- Tailwind CSS (CDN) -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        'waf-bg':      '#0a0e17',
+                        'waf-card':    '#0d1321',
+                        'waf-border':  '#1e293b',
+                        'neon-green':  '#00ff88',
+                        'neon-cyan':   '#00e5ff',
+                        'neon-red':    '#ff3355',
+                        'neon-orange': '#ff8800',
+                        'neon-purple': '#a855f7',
+                        'neon-blue':   '#3b82f6',
+                        'neon-yellow': '#fbbf24',
+                    },
+                    fontFamily: {
+                        sans:  ['Inter', 'system-ui', 'sans-serif'],
+                        mono:  ['JetBrains Mono', 'Fira Code', 'monospace'],
+                    },
+                }
+            }
+        }
+    </script>
+
+    <!-- Alpine.js -->
+    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+
+    <!-- Custom Neon Styles -->
+    <link rel="stylesheet" href="/static/styles.css" />
+</head>
+
+<body class="bg-waf-bg text-slate-200 font-sans min-h-screen">
+
+<!-- Scanline overlay -->
+<div class="scanline-overlay"></div>
+
+<!-- ═══════════════════════════════════════════════════════════════════
+     ALPINE.JS APP
+     ═══════════════════════════════════════════════════════════════════ -->
+<div x-data="dashboardApp()" x-init="init()" class="min-h-screen flex flex-col">
+
+    <!-- ─── TOP NAV BAR ─────────────────────────────────────────────── -->
+    <header class="border-b border-waf-border/50 backdrop-blur-md bg-waf-bg/80 sticky top-0 z-50">
+        <div class="max-w-[1440px] mx-auto px-6 py-3 flex items-center justify-between">
+            <!-- Logo -->
+            <div class="flex items-center gap-3">
+                <div class="w-9 h-9 rounded-lg bg-neon-green/10 border border-neon-green/30 flex items-center justify-center">
+                    <svg class="w-5 h-5 text-neon-green" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75L11.25 15 15 9.75m-3-7.036A11.959 11.959 0 013.598 6 11.99 11.99 0 003 9.749c0 5.592 3.824 10.29 9 11.623 5.176-1.332 9-6.03 9-11.622 0-1.31-.21-2.571-.598-3.751h-.152c-3.196 0-6.1-1.248-8.25-3.285z" />
+                    </svg>
+                </div>
+                <div>
+                    <h1 class="text-base font-bold tracking-tight">
+                        <span class="text-neon">Prompt</span><span class="text-slate-300">WAF</span>
+                    </h1>
+                    <p class="text-[0.6rem] font-mono text-slate-500 tracking-widest uppercase">Security Operations</p>
+                </div>
+            </div>
+
+            <!-- Status indicators -->
+            <div class="flex items-center gap-5">
+                <!-- WAF Mode -->
+                <div class="flex items-center gap-2 px-3 py-1.5 rounded-md bg-waf-card border border-waf-border">
+                    <span class="pulse-dot" :class="metrics.waf_mode === 'BLOCK' ? 'active' : 'monitor'"></span>
+                    <span class="text-xs font-mono font-semibold tracking-wider"
+                          :class="metrics.waf_mode === 'BLOCK' ? 'text-neon-green' : 'text-neon-orange'"
+                          x-text="metrics.waf_mode || 'BLOCK'"></span>
+                </div>
+
+                <!-- Version -->
+                <span class="text-[0.65rem] font-mono text-slate-500">
+                    v<span x-text="metrics.version || '{{ version }}'"></span>
+                </span>
+
+                <!-- Refresh Button -->
+                <button @click="refresh()" class="btn-neon" :class="loading && 'loading'">
+                    <svg class="w-3.5 h-3.5" :class="loading && 'animate-spin'" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182" />
+                    </svg>
+                    <span>Refresh</span>
+                </button>
+            </div>
+        </div>
+    </header>
+
+    <!-- ─── MAIN CONTENT ────────────────────────────────────────────── -->
+    <main class="flex-1 max-w-[1440px] mx-auto w-full px-6 py-6 space-y-6">
+
+        <!-- ── STAT CARDS ROW ───────────────────────────────────────── -->
+        <section class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4" id="stat-cards">
+
+            <!-- Total Requests -->
+            <div class="glass-card stat-card accent-cyan p-4">
+                <p class="text-[0.65rem] font-mono text-slate-500 uppercase tracking-wider mb-1">Requests</p>
+                <p class="text-2xl font-bold font-mono text-neon-cyan" x-text="metrics.total_requests ?? '—'"></p>
+            </div>
+
+            <!-- Blocked -->
+            <div class="glass-card stat-card accent-red p-4">
+                <p class="text-[0.65rem] font-mono text-slate-500 uppercase tracking-wider mb-1">Blocked</p>
+                <p class="text-2xl font-bold font-mono text-neon-red" x-text="metrics.total_blocked ?? '—'"></p>
+            </div>
+
+            <!-- Monitored -->
+            <div class="glass-card stat-card accent-orange p-4">
+                <p class="text-[0.65rem] font-mono text-slate-500 uppercase tracking-wider mb-1">Monitored</p>
+                <p class="text-2xl font-bold font-mono text-neon-orange" x-text="metrics.total_monitored ?? '—'"></p>
+            </div>
+
+            <!-- Allowed -->
+            <div class="glass-card stat-card accent-green p-4">
+                <p class="text-[0.65rem] font-mono text-slate-500 uppercase tracking-wider mb-1">Allowed</p>
+                <p class="text-2xl font-bold font-mono text-neon-green" x-text="metrics.total_allowed ?? '—'"></p>
+            </div>
+
+            <!-- Errors -->
+            <div class="glass-card stat-card accent-purple p-4">
+                <p class="text-[0.65rem] font-mono text-slate-500 uppercase tracking-wider mb-1">Errors</p>
+                <p class="text-2xl font-bold font-mono text-neon-purple" x-text="metrics.total_errors ?? '—'"></p>
+            </div>
+
+            <!-- Avg Latency -->
+            <div class="glass-card stat-card accent-yellow p-4">
+                <p class="text-[0.65rem] font-mono text-slate-500 uppercase tracking-wider mb-1">Avg Latency</p>
+                <p class="text-2xl font-bold font-mono text-neon-yellow">
+                    <span x-text="metrics.avg_latency_ms != null ? metrics.avg_latency_ms.toFixed(1) : '—'"></span>
+                    <span class="text-xs text-slate-500" x-show="metrics.avg_latency_ms != null">ms</span>
+                </p>
+            </div>
+        </section>
+
+        <!-- ── ATTACK LAYER BREAKDOWN ───────────────────────────────── -->
+        <section class="glass-card p-5" id="layer-breakdown">
+            <h2 class="text-sm font-semibold text-slate-400 mb-3 font-mono uppercase tracking-wider flex items-center gap-2">
+                <svg class="w-4 h-4 text-neon-purple" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M3.75 6A2.25 2.25 0 016 3.75h2.25A2.25 2.25 0 0110.5 6v2.25a2.25 2.25 0 01-2.25 2.25H6a2.25 2.25 0 01-2.25-2.25V6zM3.75 15.75A2.25 2.25 0 016 13.5h2.25a2.25 2.25 0 012.25 2.25V18a2.25 2.25 0 01-2.25 2.25H6A2.25 2.25 0 013.75 18v-2.25zM13.5 6a2.25 2.25 0 012.25-2.25H18A2.25 2.25 0 0120.25 6v2.25A2.25 2.25 0 0118 10.5h-2.25a2.25 2.25 0 01-2.25-2.25V6zM13.5 15.75a2.25 2.25 0 012.25-2.25H18a2.25 2.25 0 012.25 2.25V18A2.25 2.25 0 0118 20.25h-2.25A2.25 2.25 0 0113.5 18v-2.25z" />
+                </svg>
+                Attack Detection by Layer
+            </h2>
+            <div class="flex flex-wrap gap-3">
+                <template x-for="(count, layer) in (metrics.attacks_by_layer || {})" :key="layer">
+                    <div class="flex items-center gap-2 px-3 py-2 rounded-lg bg-waf-bg border border-waf-border">
+                        <span class="layer-chip" x-text="layer"></span>
+                        <span class="text-sm font-mono font-bold text-slate-300" x-text="count"></span>
+                    </div>
+                </template>
+                <div x-show="Object.keys(metrics.attacks_by_layer || {}).length === 0"
+                     class="text-xs text-slate-600 font-mono italic py-2">
+                    No attacks detected yet.
+                </div>
+            </div>
+        </section>
+
+        <!-- ── LIVE EVENT LOG TABLE ─────────────────────────────────── -->
+        <section class="glass-card overflow-hidden" id="event-log">
+            <div class="flex items-center justify-between px-5 py-4 border-b border-waf-border/50">
+                <h2 class="text-sm font-semibold text-slate-400 font-mono uppercase tracking-wider flex items-center gap-2">
+                    <svg class="w-4 h-4 text-neon-green" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                    Live Event Log
+                    <span class="text-[0.6rem] text-slate-600 normal-case">(last 20)</span>
+                </h2>
+                <div class="flex items-center gap-2 text-[0.65rem] font-mono text-slate-600">
+                    <span class="pulse-dot active"></span>
+                    <span x-text="'Last updated: ' + lastUpdated"></span>
+                </div>
+            </div>
+
+            <!-- Loading skeleton -->
+            <div x-show="loading && logs.length === 0" class="p-5 space-y-3">
+                <template x-for="i in 5" :key="i">
+                    <div class="skeleton h-10 w-full"></div>
+                </template>
+            </div>
+
+            <!-- Empty state -->
+            <div x-show="!loading && logs.length === 0" class="px-5 py-16 text-center">
+                <div class="w-16 h-16 mx-auto mb-4 rounded-full bg-waf-card border border-waf-border flex items-center justify-center">
+                    <svg class="w-8 h-8 text-slate-600" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75L11.25 15 15 9.75m-3-7.036A11.959 11.959 0 013.598 6 11.99 11.99 0 003 9.749c0 5.592 3.824 10.29 9 11.623 5.176-1.332 9-6.03 9-11.622 0-1.31-.21-2.571-.598-3.751h-.152c-3.196 0-6.1-1.248-8.25-3.285z" />
+                    </svg>
+                </div>
+                <p class="text-sm text-slate-500 font-mono">No events recorded yet.</p>
+                <p class="text-xs text-slate-600 mt-1">Send requests through the proxy to see live activity.</p>
+            </div>
+
+            <!-- Table -->
+            <div x-show="logs.length > 0" class="overflow-x-auto">
+                <table class="waf-table">
+                    <thead>
+                        <tr>
+                            <th>Timestamp</th>
+                            <th>Source IP</th>
+                            <th>Payload</th>
+                            <th>Action</th>
+                            <th>Layer</th>
+                            <th>Threat Score</th>
+                            <th>Latency</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <template x-for="log in logs" :key="log.id">
+                            <tr>
+                                <!-- Timestamp -->
+                                <td class="mono whitespace-nowrap" x-text="formatTime(log.timestamp)"></td>
+
+                                <!-- Source IP -->
+                                <td class="mono" x-text="log.source_ip || '—'"></td>
+
+                                <!-- Payload preview -->
+                                <td>
+                                    <div class="max-w-[280px] truncate text-xs font-mono text-slate-400"
+                                         :title="log.payload_preview || log.reason"
+                                         x-text="log.payload_preview || log.reason || '—'"></div>
+                                </td>
+
+                                <!-- Action badge -->
+                                <td>
+                                    <span class="badge"
+                                          :class="{
+                                              'badge-block':   log.action === 'BLOCK',
+                                              'badge-monitor': log.action === 'MONITOR',
+                                              'badge-allow':   log.action === 'ALLOW'
+                                          }">
+                                        <span class="pulse-dot w-1.5 h-1.5"
+                                              :class="{
+                                                  'blocked': log.action === 'BLOCK',
+                                                  'monitor': log.action === 'MONITOR',
+                                                  'active':  log.action === 'ALLOW'
+                                              }"
+                                              style="animation: none;"></span>
+                                        <span x-text="log.action"></span>
+                                    </span>
+                                </td>
+
+                                <!-- Layer -->
+                                <td>
+                                    <span class="layer-chip" x-text="log.layer || '—'"></span>
+                                </td>
+
+                                <!-- Threat Score -->
+                                <td>
+                                    <div class="flex items-center gap-2">
+                                        <div class="threat-bar-bg">
+                                            <div class="threat-bar-fill"
+                                                 :class="getThreatClass(log.threat_score)"
+                                                 :style="'width: ' + (log.threat_score * 100) + '%'">
+                                            </div>
+                                        </div>
+                                        <span class="text-xs font-mono"
+                                              :class="getThreatTextClass(log.threat_score)"
+                                              x-text="(log.threat_score * 100).toFixed(0) + '%'"></span>
+                                    </div>
+                                </td>
+
+                                <!-- Latency -->
+                                <td class="mono whitespace-nowrap">
+                                    <span x-text="log.latency_ms.toFixed(1)"></span>
+                                    <span class="text-slate-600">ms</span>
+                                </td>
+                            </tr>
+                        </template>
+                    </tbody>
+                </table>
+            </div>
+        </section>
+    </main>
+
+    <!-- ─── FOOTER ──────────────────────────────────────────────────── -->
+    <footer class="dashboard-footer">
+        PromptWAF <span class="version">v{{ version }}</span> &middot; Mode: <span class="version">{{ mode }}</span> &middot; Enterprise LLM Firewall
+    </footer>
+</div>
+
+
+<!-- ═══════════════════════════════════════════════════════════════════
+     ALPINE.JS APPLICATION LOGIC
+     ═══════════════════════════════════════════════════════════════════ -->
+<script>
+function dashboardApp() {
+    return {
+        logs: [],
+        metrics: {},
+        loading: true,
+        lastUpdated: '—',
+        autoRefreshInterval: null,
+
+        async init() {
+            await this.refresh();
+            // Auto-refresh every 10 seconds
+            this.autoRefreshInterval = setInterval(() => this.refresh(), 10000);
+        },
+
+        async refresh() {
+            this.loading = true;
+            try {
+                const [logsRes, metricsRes] = await Promise.all([
+                    fetch('/api/v1/logs?limit=20'),
+                    fetch('/metrics/json'),
+                ]);
+
+                if (logsRes.ok) {
+                    this.logs = await logsRes.json();
+                }
+                if (metricsRes.ok) {
+                    this.metrics = await metricsRes.json();
+                }
+
+                this.lastUpdated = new Date().toLocaleTimeString();
+            } catch (err) {
+                console.error('Dashboard fetch error:', err);
+            } finally {
+                this.loading = false;
+            }
+        },
+
+        formatTime(isoStr) {
+            if (!isoStr) return '—';
+            try {
+                const d = new Date(isoStr);
+                return d.toLocaleString('en-GB', {
+                    day: '2-digit', month: 'short',
+                    hour: '2-digit', minute: '2-digit', second: '2-digit',
+                    hour12: false,
+                });
+            } catch {
+                return isoStr;
+            }
+        },
+
+        getThreatClass(score) {
+            if (score >= 0.8) return 'threat-high';
+            if (score >= 0.4) return 'threat-med';
+            return 'threat-low';
+        },
+
+        getThreatTextClass(score) {
+            if (score >= 0.8) return 'text-neon-red';
+            if (score >= 0.4) return 'text-neon-orange';
+            return 'text-neon-green';
+        },
+    };
+}
+</script>
+
+</body>
+</html>

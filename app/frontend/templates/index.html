@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="PromptWAF — Enterprise-grade Web Application Firewall for LLM APIs." />
+    <title>PromptWAF — LLM Firewall</title>
+
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&family=JetBrains+Mono:wght@400;600;700&display=swap" rel="stylesheet" />
+
+    <link rel="stylesheet" href="/static/styles.css" />
+    <style>
+        .hero-container {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            text-align: center;
+            padding: 2rem;
+        }
+        .hero-logo {
+            width: 72px;
+            height: 72px;
+            border-radius: 18px;
+            background: rgba(0, 255, 136, 0.08);
+            border: 1px solid rgba(0, 255, 136, 0.25);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin-bottom: 1.5rem;
+        }
+        .hero-logo svg {
+            width: 40px;
+            height: 40px;
+            color: var(--neon-green);
+        }
+        .hero-title {
+            font-size: 3rem;
+            font-weight: 800;
+            letter-spacing: -0.03em;
+            margin-bottom: 0.5rem;
+        }
+        .hero-subtitle {
+            color: var(--text-secondary);
+            font-size: 1.1rem;
+            max-width: 480px;
+            margin-bottom: 2.5rem;
+        }
+        .hero-actions {
+            display: flex;
+            gap: 1rem;
+            flex-wrap: wrap;
+            justify-content: center;
+        }
+        .hero-actions a {
+            text-decoration: none;
+        }
+        .btn-primary {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 12px 28px;
+            border-radius: var(--radius-sm);
+            font-family: var(--font-mono);
+            font-size: 0.85rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+            border: 1px solid var(--neon-green);
+            background: rgba(0, 255, 136, 0.12);
+            color: var(--neon-green);
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+        .btn-primary:hover {
+            background: rgba(0, 255, 136, 0.22);
+            box-shadow: var(--glow-green);
+            transform: translateY(-2px);
+        }
+        .btn-secondary {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 12px 28px;
+            border-radius: var(--radius-sm);
+            font-family: var(--font-mono);
+            font-size: 0.85rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+            border: 1px solid var(--border-subtle);
+            background: transparent;
+            color: var(--text-secondary);
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+        .btn-secondary:hover {
+            border-color: var(--text-muted);
+            color: var(--text-primary);
+            transform: translateY(-2px);
+        }
+        .hero-status {
+            margin-top: 3rem;
+            display: flex;
+            gap: 2rem;
+            font-family: var(--font-mono);
+            font-size: 0.75rem;
+            color: var(--text-muted);
+        }
+        .hero-status span.val {
+            color: var(--neon-green);
+            font-weight: 600;
+        }
+    </style>
+</head>
+<body>
+    <div class="scanline-overlay"></div>
+
+    <div class="hero-container">
+        <div class="hero-logo">
+            <svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75L11.25 15 15 9.75m-3-7.036A11.959 11.959 0 013.598 6 11.99 11.99 0 003 9.749c0 5.592 3.824 10.29 9 11.623 5.176-1.332 9-6.03 9-11.622 0-1.31-.21-2.571-.598-3.751h-.152c-3.196 0-6.1-1.248-8.25-3.285z" />
+            </svg>
+        </div>
+
+        <h1 class="hero-title">
+            <span class="text-neon">Prompt</span><span class="text-slate-300" style="color:var(--text-bright)">WAF</span>
+        </h1>
+        <p class="hero-subtitle">
+            Enterprise-grade web application firewall for LLM APIs.
+            Multi-layer threat detection, fail-closed policy, and real-time monitoring.
+        </p>
+
+        <div class="hero-actions">
+            <a href="/dashboard">
+                <span class="btn-primary">Open Dashboard →</span>
+            </a>
+            <a href="/docs">
+                <span class="btn-secondary">API Docs</span>
+            </a>
+        </div>
+
+        <div class="hero-status">
+            <div>Status: <span class="val">ACTIVE</span></div>
+            <div>Version: <span class="val">{{ version }}</span></div>
+            <div>Mode: <span class="val">{{ mode }}</span></div>
+        </div>
+    </div>
+</body>
+</html>
