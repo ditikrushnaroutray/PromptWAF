@@ -10,3 +10,5 @@ redis
 limits
 scikit-learn
 email-validator
+jinja2
+aiofiles
