@@ -9,8 +9,6 @@ are detected.
 """
 
 import json
-import re
-import logging
 from typing import AsyncGenerator, Optional
 
 from sklearn.feature_extraction.text import TfidfVectorizer

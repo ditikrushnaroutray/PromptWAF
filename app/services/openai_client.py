@@ -11,7 +11,7 @@ from typing import AsyncGenerator, Optional
 
 import httpx
 from fastapi import HTTPException
-from fastapi.responses import StreamingResponse, JSONResponse
+from fastapi.responses import StreamingResponse
 
 from app.services.output_scanner import scan_streaming_response, scan_response_body
 from app.core.logging_config import get_security_logger

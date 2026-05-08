@@ -13,7 +13,7 @@ Fail-Closed Policy:
 
 import asyncio
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Optional, Protocol, List
 
 from sklearn.feature_extraction.text import TfidfVectorizer

@@ -1,5 +1,3 @@
-import os
-import secrets
 import logging
 from fastapi import Request, HTTPException, Security, Depends
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
