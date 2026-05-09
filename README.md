@@ -6,7 +6,7 @@
 
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.100+-green.svg)](https://fastapi.tiangolo.com/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![License: GPLv3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 [![Docker](https://img.shields.io/badge/Docker-Ready-2496ED.svg)](https://www.docker.com/)
 
 *A drop-in, transparent proxy that sits between your application and OpenAI to block prompt injection, jailbreaks, and system prompt leakage — in real time.*
@@ -417,4 +417,4 @@ PromptWAF/
 
 ## License
 
-MIT © PromptWAF Contributors
+GNU General Public License v3 © PromptWAF Contributors
