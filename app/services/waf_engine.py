@@ -235,6 +235,24 @@ def _extract_system_prompt(payload: dict) -> Optional[str]:
     return None
 
 
+def detect_system_shadowing(user_input: str, system_prompt: str) -> float:
+    """
+    Calculate the overlap of rare words (excluding stop words) between user_input and system_prompt
+    using TF-IDF and cosine similarity.
+    """
+    if not system_prompt or not user_input:
+        return 0.0
+
+    try:
+        vectorizer = TfidfVectorizer(stop_words='english')
+        tfidf_matrix = vectorizer.fit_transform([system_prompt, user_input])
+        similarity = cosine_similarity(tfidf_matrix[0:1], tfidf_matrix[1:2])[0][0]
+        return float(similarity)
+    except Exception:
+        # If vectorization fails (e.g. no words left after stop words removal), return 0.0
+        return 0.0
+
+
 # ---------------------------------------------------------------------------
 # Main Entry Point — Fail-Closed Orchestrator
 # ---------------------------------------------------------------------------
@@ -291,6 +309,20 @@ async def _analyze_prompt_inner(payload: dict) -> WafVerdict:
 
     # --- Normalize ---
     norm_result = normalize_prompt(raw_text)
+
+    # --- System Shadowing Detection ---
+    system_prompt = _extract_system_prompt(payload)
+    if system_prompt:
+        shadowing_score = detect_system_shadowing(norm_result.normalized, system_prompt)
+        if shadowing_score > 0.65:
+            return WafVerdict(
+                blocked=True,
+                reason=f"SYSTEM_LEAK_ATTACK: System prompt shadowing detected (score: {shadowing_score:.3f})",
+                layer="system_shadowing",
+                confidence=shadowing_score,
+                similarity_score=shadowing_score,
+                normalization=norm_result,
+            )
 
     # --- Layer 1: Heuristic ---
     verdict = _check_heuristic(norm_result.normalized)

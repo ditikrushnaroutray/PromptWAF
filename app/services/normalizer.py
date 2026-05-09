@@ -111,35 +111,48 @@ def decode_embedded_payloads(text: str) -> tuple:
     """
     Scan for Base64 and hex-encoded substrings, decode them, and replace
     inline so downstream detection sees the real content.
+    Recursively decodes up to a maximum depth of 5 iterations.
 
     Returns:
         (decoded_text, [(encoded, decoded), ...])
     """
-    decoded_pairs = []
+    all_decoded_pairs = []
+    max_depth = 5
 
-    # --- Base64 ---
-    def _replace_b64(match: re.Match) -> str:
-        encoded = match.group(0)
-        decoded = _try_base64_decode(encoded)
-        if decoded:
-            decoded_pairs.append((encoded, decoded))
-            return decoded
-        return encoded
+    for _ in range(max_depth):
+        iteration_pairs = []
+        original_text = text
 
-    text = _BASE64_RE.sub(_replace_b64, text)
+        # --- Base64 ---
+        def _replace_b64(match: re.Match) -> str:
+            encoded = match.group(0)
+            decoded = _try_base64_decode(encoded)
+            # Avoid re-decoding if decoded is exactly the same as encoded
+            if decoded and decoded != encoded:
+                iteration_pairs.append((encoded, decoded))
+                return decoded
+            return encoded
 
-    # --- Hex ---
-    def _replace_hex(match: re.Match) -> str:
-        hex_part = match.group(1)
-        decoded = _try_hex_decode(hex_part)
-        if decoded:
-            decoded_pairs.append((match.group(0), decoded))
-            return decoded
-        return match.group(0)
+        text = _BASE64_RE.sub(_replace_b64, text)
 
-    text = _HEX_RE.sub(_replace_hex, text)
+        # --- Hex ---
+        def _replace_hex(match: re.Match) -> str:
+            hex_part = match.group(1)
+            decoded = _try_hex_decode(hex_part)
+            if decoded and decoded != match.group(0):
+                iteration_pairs.append((match.group(0), decoded))
+                return decoded
+            return match.group(0)
 
-    return text, decoded_pairs
+        text = _HEX_RE.sub(_replace_hex, text)
+
+        if not iteration_pairs:
+            # No new decodings happened in this iteration
+            break
+
+        all_decoded_pairs.extend(iteration_pairs)
+
+    return text, all_decoded_pairs
 
 
 # ---------------------------------------------------------------------------
