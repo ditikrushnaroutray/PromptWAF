@@ -13,7 +13,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from app.api.v1.proxy import router as proxy_router
 from app.api.v1.keys import router as keys_router
 from app.api.v1.logs import router as logs_router
-from app.db.models import init_db
+from app.db.session import init_db
 from app.core.security import limiter
 from app.core.logging_config import setup_logging, get_security_logger
 from app.core.config import WAF_MODE, WAF_VERSION, REDIS_URL
@@ -74,7 +74,7 @@ async def lifespan(app: FastAPI):
         f"redis={'connected' if REDIS_URL != 'memory://' else 'disabled (in-memory)'}",
         extra={"event": "startup", "waf_mode": WAF_MODE.value},
     )
-    init_db()
+    await init_db()
     yield
     # Shutdown
     logger.info(f"PromptWAF v{WAF_VERSION} shutting down", extra={"event": "shutdown"})
