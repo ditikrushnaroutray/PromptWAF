@@ -28,3 +28,6 @@ redis-data/
 
 # Testing
 .pytest_cache/
+
+# Context for AI
+agent.md
