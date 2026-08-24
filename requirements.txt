@@ -12,3 +12,6 @@ scikit-learn
 email-validator
 jinja2
 aiofiles
+pydantic-settings
+asyncpg
+aiosqlite
