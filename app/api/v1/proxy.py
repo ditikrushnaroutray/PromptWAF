@@ -166,8 +166,8 @@ async def chat_completions(
     original_prompt = ""
     normalized_prompt = ""
     if verdict.normalization:
-        original_prompt = verdict.normalization.original
-        normalized_prompt = verdict.normalization.normalized
+        original_prompt = verdict.normalization.original_text
+        normalized_prompt = verdict.normalization.normalized_text
 
     # --- Persist to DB for dashboard ---
     if verdict.blocked:

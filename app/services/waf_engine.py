@@ -313,7 +313,7 @@ async def _analyze_prompt_inner(payload: dict) -> WafVerdict:
     # --- System Shadowing Detection ---
     system_prompt = _extract_system_prompt(payload)
     if system_prompt:
-        shadowing_score = detect_system_shadowing(norm_result.normalized, system_prompt)
+        shadowing_score = detect_system_shadowing(norm_result.normalized_text, system_prompt)
         if shadowing_score > 0.65:
             return WafVerdict(
                 blocked=True,
@@ -325,7 +325,7 @@ async def _analyze_prompt_inner(payload: dict) -> WafVerdict:
             )
 
     # --- Layer 1: Heuristic ---
-    verdict = _check_heuristic(norm_result.normalized)
+    verdict = _check_heuristic(norm_result.normalized_text)
     if verdict:
         return WafVerdict(
             blocked=verdict.blocked,
@@ -337,7 +337,7 @@ async def _analyze_prompt_inner(payload: dict) -> WafVerdict:
         )
 
     # --- Layer 2: Semantic ---
-    verdict = _check_semantic(norm_result.normalized)
+    verdict = _check_semantic(norm_result.normalized_text)
     if verdict:
         return WafVerdict(
             blocked=verdict.blocked,
@@ -349,7 +349,7 @@ async def _analyze_prompt_inner(payload: dict) -> WafVerdict:
         )
 
     # --- Layer 3: LLM Judge (optional) ---
-    verdict = await _check_llm_judge(norm_result.normalized)
+    verdict = await _check_llm_judge(norm_result.normalized_text)
     if verdict:
         return WafVerdict(
             blocked=verdict.blocked,
