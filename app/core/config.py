@@ -33,7 +33,8 @@ class Settings(BaseSettings):
     WAF_FAIL_CLOSED: bool = Field(default=True)
     SECRET_KEY: str = Field(default_factory=lambda: secrets.token_hex(32))
     DATABASE_URL: str = Field(default="sqlite+aiosqlite:////tmp/waf.db")
-
+    MAX_NORMALIZATION_DEPTH: int = Field(default=3, ge=1)
+    ENABLE_NORMALIZATION: bool = Field(default=True)
     @field_validator("WAF_OPENAI_API_KEY")
     def validate_api_key(cls, v):
         if not v or not v.strip():
@@ -60,6 +61,8 @@ LEAKAGE_SIMILARITY_THRESHOLD = settings.LEAKAGE_SIMILARITY_THRESHOLD
 WAF_ENABLE_LLM_JUDGE = settings.WAF_ENABLE_LLM_JUDGE
 WAF_VERSION = "2.1.0"
 LEAKAGE_WINDOW_SIZE = 500
+MAX_NORMALIZATION_DEPTH = settings.MAX_NORMALIZATION_DEPTH
+ENABLE_NORMALIZATION = settings.ENABLE_NORMALIZATION
 
 # ---------------------------------------------------------------------------
 # Layer 1 — Fast Heuristic Regex Patterns
