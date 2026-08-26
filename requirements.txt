@@ -15,3 +15,4 @@ aiofiles
 pydantic-settings
 asyncpg
 aiosqlite
+numpy
