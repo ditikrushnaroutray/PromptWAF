@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
-from app.db.models import WafLog
+from app.db.models import APIKey, RequestLog
 
 router = APIRouter()
 

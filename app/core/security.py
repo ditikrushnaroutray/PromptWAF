@@ -6,7 +6,7 @@ from passlib.context import CryptContext
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 from app.db.session import get_db
-from app.db.models import ApiKey
+from app.db.models import APIKey
 from app.core.config import REDIS_URL
 
 _logger = logging.getLogger("promptwaf.security")
@@ -46,13 +46,13 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
 async def verify_api_key(
     credentials: HTTPAuthorizationCredentials = Security(security_scheme),
     db: Session = Depends(get_db)
-) -> ApiKey:
+) -> APIKey:
     """Dependency to extract and verify the API key from the Bearer token."""
     raw_key = credentials.credentials
     
     # We fetch all active keys and check the hash. 
     # In a high-performance system, consider caching verified keys in Redis.
-    api_keys = db.query(ApiKey).filter(ApiKey.is_active == True).all()
+    api_keys = db.query(APIKey).filter(APIKey.is_active == True).all()
     
     for db_key in api_keys:
         if verify_password(raw_key, db_key.key_hash):
