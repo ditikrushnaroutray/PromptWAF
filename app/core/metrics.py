@@ -42,6 +42,11 @@ class WafMetrics:
         # Latency tracking (for average)
         self._total_latency_ms: float = 0.0
         self._latency_count: int = 0
+        
+        # Semantic Engine Latency Histogram (Buckets: 1ms, 2ms, 5ms, 10ms, 50ms, +Inf)
+        self._semantic_latency_buckets = {1: 0, 2: 0, 5: 0, 10: 0, 50: 0, float('inf'): 0}
+        self._semantic_latency_sum: float = 0.0
+        self._semantic_latency_count: int = 0
 
     # ----- Recording Methods -----
 
@@ -82,6 +87,15 @@ class WafMetrics:
         with self._lock:
             self._total_latency_ms += latency_ms
             self._latency_count += 1
+            
+    def record_semantic_latency(self, latency_ms: float) -> None:
+        """Record semantic engine latency into a histogram."""
+        with self._lock:
+            self._semantic_latency_sum += latency_ms
+            self._semantic_latency_count += 1
+            for bucket in [1, 2, 5, 10, 50, float('inf')]:
+                if latency_ms <= bucket:
+                    self._semantic_latency_buckets[bucket] += 1
 
     # ----- Query Methods -----
 
@@ -110,6 +124,9 @@ class WafMetrics:
                 ),
                 "latency_samples": self._latency_count,
                 "total_latency_ms": self._total_latency_ms,
+                "semantic_latency_buckets": dict(self._semantic_latency_buckets),
+                "semantic_latency_sum": self._semantic_latency_sum,
+                "semantic_latency_count": self._semantic_latency_count,
             }
 
     # ----- Prometheus Exposition -----
@@ -173,6 +190,15 @@ class WafMetrics:
         lines.append("# HELP promptwaf_inspection_latency_count Total number of latency samples.")
         lines.append("# TYPE promptwaf_inspection_latency_count counter")
         lines.append(f"promptwaf_inspection_latency_count {snap['latency_samples']}")
+
+        # Semantic latency histogram
+        lines.append("# HELP promptwaf_semantic_latency_ms Semantic engine inspection latency in milliseconds.")
+        lines.append("# TYPE promptwaf_semantic_latency_ms histogram")
+        for bucket in [1, 2, 5, 10, 50]:
+            lines.append(f'promptwaf_semantic_latency_ms_bucket{{le="{bucket}"}} {snap["semantic_latency_buckets"][bucket]}')
+        lines.append(f'promptwaf_semantic_latency_ms_bucket{{le="+Inf"}} {snap["semantic_latency_buckets"][float("inf")]}')
+        lines.append(f"promptwaf_semantic_latency_ms_sum {snap['semantic_latency_sum']:.3f}")
+        lines.append(f"promptwaf_semantic_latency_ms_count {snap['semantic_latency_count']}")
 
         return "\n".join(lines) + "\n"
 
