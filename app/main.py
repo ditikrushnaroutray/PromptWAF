@@ -5,8 +5,8 @@ from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
+from fastapi.responses import JSONResponse
 from slowapi.middleware import SlowAPIMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
 
@@ -105,9 +105,17 @@ app.add_middleware(
 # Security Headers Middleware (outermost layer)
 app.add_middleware(SecurityHeadersMiddleware)
 
+def custom_rate_limit_exceeded_handler(request: Request, exc: RateLimitExceeded) -> Response:
+    retry_after = 60
+    return JSONResponse(
+        {"error": "Rate limit exceeded. Please try again later.", "retry_after": retry_after},
+        status_code=429,
+        headers={"Retry-After": str(retry_after)}
+    )
+
 # SlowAPI Setup
 app.state.limiter = limiter
-app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+app.add_exception_handler(RateLimitExceeded, custom_rate_limit_exceeded_handler)
 app.add_middleware(SlowAPIMiddleware)
 
 # Mount static files
