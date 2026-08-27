@@ -12,15 +12,19 @@ Every request flows through:
 """
 
 import uuid
+import json
+import time
+from typing import AsyncGenerator
 
 from fastapi import APIRouter, Request, HTTPException, Depends
 from fastapi.responses import JSONResponse, StreamingResponse
 from sqlalchemy.orm import Session
 
 from app.services.waf_engine import waf_engine_instance, WafVerdict
-from app.services.openai_client import forward_to_openai
+from app.services.openai_client import forward_request, forward_stream
+from app.services.output_scanner import OutputScanner
 from app.core.security import verify_api_key, limiter
-from app.core.config import PROTECTED_SYSTEM_PROMPT, WAF_MODE, WafMode, RATE_LIMIT_STRING
+from app.core.config import PROTECTED_SYSTEM_PROMPT, WAF_MODE, WafMode, RATE_LIMIT_STRING, settings
 from app.core.logging_config import get_security_logger, log_waf_decision, truncate_for_log
 from app.core.metrics import waf_metrics, LatencyTimer
 from app.db.models import APIKey, RequestLog
@@ -56,6 +60,8 @@ def _make_blocked_response(
     response.headers["X-PromptWAF-Status"] = "Blocked"
     response.headers["X-PromptWAF-Request-Id"] = request_id
     response.headers["X-PromptWAF-Layer"] = verdict.layer
+    response.headers["X-PromptWAF-Mode"] = WAF_MODE.value
+    response.headers["X-PromptWAF-Version"] = "2.1.0"
     return response
 
 
@@ -73,8 +79,11 @@ def _make_error_response(
             }
         },
     )
-    response.headers["X-PromptWAF-Status"] = "Error"
+    response.headers["X-PromptWAF-Status"] = "Blocked"
     response.headers["X-PromptWAF-Request-Id"] = request_id
+    response.headers["X-PromptWAF-Layer"] = verdict.layer
+    response.headers["X-PromptWAF-Mode"] = WAF_MODE.value
+    response.headers["X-PromptWAF-Version"] = "2.1.0"
     return response
 
 
@@ -89,8 +98,9 @@ def _add_security_headers(
         response.headers["X-PromptWAF-Status"] = status
         response.headers["X-PromptWAF-Request-Id"] = request_id
         response.headers["X-PromptWAF-Mode"] = WAF_MODE.value
+        response.headers["X-PromptWAF-Version"] = "2.1.0"
         if detected_attack:
-            response.headers["X-PromptWAF-Detected-Attack"] = "True"
+            response.headers["X-PromptWAF-Layer"] = "monitored"
     return response
 
 
@@ -145,6 +155,30 @@ async def chat_completions(
     # --- 1. Payload Extraction ---
     try:
         payload = await request.json()
+        if not isinstance(payload, dict):
+            raise ValueError("Payload must be a JSON object")
+            
+        messages = payload.get("messages")
+        if not isinstance(messages, list) or len(messages) == 0:
+            return JSONResponse(
+                status_code=422, 
+                content={"error": {"message": "'messages' must be a non-empty array", "type": "invalid_request_error"}}
+            )
+            
+        model = payload.get("model")
+        if not isinstance(model, str) or not model.strip():
+            return JSONResponse(
+                status_code=422, 
+                content={"error": {"message": "'model' must be a valid string", "type": "invalid_request_error"}}
+            )
+            
+        stream = payload.get("stream", False)
+        if not isinstance(stream, bool):
+            return JSONResponse(
+                status_code=422, 
+                content={"error": {"message": "'stream' must be a boolean", "type": "invalid_request_error"}}
+            )
+            
         raw_text = _extract_user_text(payload)
         system_prompt = _extract_system_prompt(payload)
     except Exception:
@@ -274,25 +308,91 @@ async def chat_completions(
         # Determine system prompt for leakage detection (Option C: both sources)
         sys_prompt_for_leakage = system_prompt or PROTECTED_SYSTEM_PROMPT
 
-        result = await forward_to_openai(
-            payload=payload,
-            headers=dict(request.headers),
-            request_id=request_id,
-            system_prompt=sys_prompt_for_leakage,
-        )
+        messages = payload.pop("messages", [])
+        
+        if payload.get("stream", False):
+            result = forward_stream(
+                messages=messages,
+                headers=dict(request.headers),
+                **payload
+            )
+        else:
+            result = await forward_request(
+                messages=messages,
+                headers=dict(request.headers),
+                **payload
+            )
 
         # Determine status label
         if detected_attack:
             status_label = "Monitored"
         else:
             status_label = "Clean"
+            
+        scanner = OutputScanner(settings)
 
-        # Add security headers to the response
-        if isinstance(result, (JSONResponse, StreamingResponse)):
-            _add_security_headers(result, request_id, status_label, detected_attack)
-            return result
+        # Handle AsyncGenerator (SSE Stream)
+        if hasattr(result, '__aiter__'):
+            async def _stream_with_scanner() -> AsyncGenerator[bytes, None]:
+                async for chunk in result:
+                    chunk_text = chunk.decode("utf-8", errors="ignore")
+                    for line in chunk_text.splitlines():
+                        if line.startswith("data: ") and line != "data: [DONE]":
+                            try:
+                                data_json = json.loads(line[6:])
+                                content = data_json.get("choices", [{}])[0].get("delta", {}).get("content", "")
+                                if content:
+                                    start_t = time.perf_counter()
+                                    leak_res = scanner.scan_chunk(content)
+                                    scan_ms = (time.perf_counter() - start_t) * 1000.0
+                                    waf_metrics.record_output_scan_latency(scan_ms)
+                                    
+                                    if leak_res.detected:
+                                        with waf_metrics._lock:
+                                            waf_metrics._attacks_by_layer["leakage"] += 1
+                                            
+                                        if WAF_MODE.value == "BLOCK":
+                                            logger.warning("Stream blocked due to leakage detection")
+                                            error_payload = json.dumps({"error": "PromptWAF Security Violation: System Prompt Leakage Detected"})
+                                            yield f"data: {error_payload}\n\n".encode("utf-8")
+                                            yield b"data: [DONE]\n\n"
+                                            return
+                            except json.JSONDecodeError:
+                                pass
+                    yield chunk
+                    
+            stream_response = StreamingResponse(_stream_with_scanner(), media_type="text/event-stream")
+            _add_security_headers(stream_response, request_id, status_label, detected_attack)
+            return stream_response
+
         else:
-            # Dict response from non-streaming
+            # Handle non-streaming dict
+            content = result.get("choices", [{}])[0].get("message", {}).get("content", "")
+            if content:
+                start_t = time.perf_counter()
+                leak_res = scanner.scan_chunk(content)
+                scan_ms = (time.perf_counter() - start_t) * 1000.0
+                waf_metrics.record_output_scan_latency(scan_ms)
+                
+                if leak_res.detected:
+                    with waf_metrics._lock:
+                        waf_metrics._attacks_by_layer["leakage"] += 1
+                        
+                    if WAF_MODE.value == "BLOCK":
+                        logger.warning("Non-streaming response blocked due to leakage detection")
+                        resp = JSONResponse(
+                            status_code=403,
+                            content={
+                                "error": {
+                                    "message": "PromptWAF Security Violation: System Prompt Leakage Detected",
+                                    "type": "leakage_blocked"
+                                }
+                            }
+                        )
+                        _add_security_headers(resp, request_id, "Leakage-Detected", True)
+                        resp.headers["X-PromptWAF-Layer"] = "leakage"
+                        return resp
+                        
             response = JSONResponse(content=result)
             _add_security_headers(response, request_id, status_label, detected_attack)
             return response
