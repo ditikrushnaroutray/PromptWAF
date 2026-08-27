@@ -1,215 +1,102 @@
 """
-PromptWAF Output Scanner — Streaming-aware leakage detection.
-
-Monitors the SSE (text/event-stream) response from OpenAI and terminates
-the stream if the outgoing text matches the protected system prompt.
-
-Uses a sliding-window buffer so partial matches across chunk boundaries
-are detected.
+PromptWAF Output Scanner — Phase 6
+Monitors outbound SSE streams for System Prompt Leakage.
 """
 
-import json
-from typing import AsyncGenerator, Optional
+import collections
+import logging
+import time
+from dataclasses import dataclass
+from typing import Optional
 
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 
-from app.core.config import (
-    PROTECTED_SYSTEM_PROMPT,
-    LEAKAGE_SIMILARITY_THRESHOLD,
-    LEAKAGE_WINDOW_SIZE,
-)
-from app.core.logging_config import get_security_logger
-
-logger = get_security_logger()
+from app.core.config import Settings
 
 
-# ---------------------------------------------------------------------------
-# Leakage Similarity Computation
-# ---------------------------------------------------------------------------
+@dataclass(frozen=True)
+class LeakageResult:
+    detected: bool
+    confidence: float
+    leaked_text: Optional[str]
+    position: Optional[int]
 
-def _compute_leakage_similarity(text: str, system_prompt: str) -> float:
+
+class OutputScanner:
     """
-    Compute normalized similarity between accumulated output text and the
-    protected system prompt using TF-IDF char n-grams + cosine similarity.
-
-    Returns a float 0.0 – 1.0.
+    Scans outbound chunks using a sliding window to detect system prompt leakage.
+    Designed for <1ms latency per chunk.
     """
-    if not system_prompt or not text:
-        return 0.0
-
-    # Short texts produce noisy TF-IDF — use direct substring check first
-    prompt_lower = system_prompt.lower().strip()
-    text_lower = text.lower().strip()
-
-    # Fast-path: exact or near-exact substring match
-    if len(prompt_lower) > 20 and prompt_lower[:50] in text_lower:
-        return 1.0
-
-    try:
-        vectorizer = TfidfVectorizer(
-            analyzer="char_wb",
+    def __init__(self, config: Settings, window_size: int = 10):
+        self.config = config
+        self.window_size = window_size
+        self.logger = logging.getLogger("promptwaf.scanner")
+        
+        self._buffer = collections.deque(maxlen=window_size)
+        self._position = 0
+        
+        # Prepare specialized fast TF-IDF vectorizer for system prompt
+        self.protected_prompt = self.config.PROTECTED_SYSTEM_PROMPT
+        self._vectorizer = TfidfVectorizer(
+            analyzer='char_wb',
             ngram_range=(3, 5),
             max_features=5000,
-            lowercase=True,
+            stop_words='english'
         )
-        vectors = vectorizer.fit_transform([text, system_prompt])
-        sim = cosine_similarity(vectors[0:1], vectors[1:2])
-        return float(sim[0][0])
-    except Exception:
-        return 0.0
+        
+        # Pre-fit and cache the target vector if a prompt exists
+        if self.protected_prompt and self.protected_prompt.strip():
+            self._vectorizer.fit([self.protected_prompt])
+            self._target_vector = self._vectorizer.transform([self.protected_prompt])
+            self._is_ready = True
+        else:
+            self._is_ready = False
 
-
-# ---------------------------------------------------------------------------
-# SSE Chunk Text Extraction
-# ---------------------------------------------------------------------------
-
-_SSE_DATA_PREFIX = "data: "
-
-
-def _extract_text_from_sse_chunk(chunk_bytes: bytes) -> str:
-    """
-    Extract delta content text from an SSE chunk.
-
-    SSE format:
-        data: {"id":"...","choices":[{"delta":{"content":"Hello"}}]}
-    """
-    texts = []
-    try:
-        chunk_str = chunk_bytes.decode("utf-8", errors="replace")
-        for line in chunk_str.split("\n"):
-            line = line.strip()
-            if not line.startswith(_SSE_DATA_PREFIX):
-                continue
-            json_str = line[len(_SSE_DATA_PREFIX):]
-            if json_str == "[DONE]":
-                continue
-            try:
-                data = json.loads(json_str)
-                for choice in data.get("choices", []):
-                    delta = choice.get("delta", {})
-                    content = delta.get("content", "")
-                    if content:
-                        texts.append(content)
-            except (json.JSONDecodeError, TypeError, KeyError):
-                continue
-    except Exception:
-        pass
-    return "".join(texts)
-
-
-# ---------------------------------------------------------------------------
-# Non-Streaming Response Scanner
-# ---------------------------------------------------------------------------
-
-def scan_response_body(response_data: dict, system_prompt: Optional[str] = None) -> bool:
-    """
-    Scan a non-streaming JSON response for system prompt leakage.
-
-    Returns True if leakage is detected, False if clean.
-    """
-    effective_prompt = system_prompt or PROTECTED_SYSTEM_PROMPT
-    if not effective_prompt:
-        return False
-
-    try:
-        choices = response_data.get("choices", [])
-        for choice in choices:
-            message = choice.get("message", {})
-            content = message.get("content", "")
-            if content:
-                sim = _compute_leakage_similarity(content, effective_prompt)
-                if sim >= LEAKAGE_SIMILARITY_THRESHOLD:
-                    logger.warning(
-                        "Output leakage detected in non-streaming response",
-                        extra={
-                            "event": "leakage_detected",
-                            "similarity_score": sim,
-                            "leakage_detected": True,
-                        },
-                    )
-                    return True
-    except Exception as exc:
-        logger.error(f"Output scanner error: {exc}")
-    return False
-
-
-# ---------------------------------------------------------------------------
-# Streaming Response Scanner (Sliding-Window)
-# ---------------------------------------------------------------------------
-
-async def scan_streaming_response(
-    upstream_generator: AsyncGenerator[bytes, None],
-    system_prompt: Optional[str] = None,
-    request_id: str = "",
-) -> AsyncGenerator[bytes, None]:
-    """
-    Wraps the upstream SSE generator with a sliding-window leakage scanner.
-
-    Yields chunks to the client in real-time while accumulating text in a
-    rolling buffer. If the buffer matches the protected system prompt above
-    the leakage threshold, the stream is terminated with a security violation.
-    """
-    effective_prompt = system_prompt or PROTECTED_SYSTEM_PROMPT
-    buffer = ""
-    window_size = LEAKAGE_WINDOW_SIZE
-    scan_enabled = bool(effective_prompt)
-    check_interval = 5  # Check every N chunks to avoid excessive computation
-    chunk_count = 0
-
-    async for chunk in upstream_generator:
-        if scan_enabled:
-            # Extract text from this SSE chunk
-            text = _extract_text_from_sse_chunk(chunk)
-            if text:
-                buffer += text
-                chunk_count += 1
-
-                # Trim buffer to sliding window size
-                if len(buffer) > window_size:
-                    buffer = buffer[-window_size:]
-
-                # Periodic leakage check (not every chunk — performance)
-                if chunk_count % check_interval == 0 and len(buffer) >= 30:
-                    sim = _compute_leakage_similarity(buffer, effective_prompt)
-                    if sim >= LEAKAGE_SIMILARITY_THRESHOLD:
-                        logger.warning(
-                            "STREAM TERMINATED: System prompt leakage detected",
-                            extra={
-                                "event": "stream_leakage_terminated",
-                                "request_id": request_id,
-                                "similarity_score": sim,
-                                "leakage_detected": True,
-                            },
-                        )
-                        # Send error event and terminate
-                        error_event = (
-                            'data: {"error": {"message": "Security Violation: '
-                            'Leakage Detected", "type": "security_violation"}}\n\n'
-                        )
-                        yield error_event.encode("utf-8")
-                        yield b"data: [DONE]\n\n"
-                        return
-
-        # Forward chunk to client
-        yield chunk
-
-    # Final check on remaining buffer
-    if scan_enabled and len(buffer) >= 30:
-        sim = _compute_leakage_similarity(buffer, effective_prompt)
-        if sim >= LEAKAGE_SIMILARITY_THRESHOLD:
-            logger.warning(
-                "FINAL BUFFER: System prompt leakage detected at stream end",
-                extra={
-                    "event": "stream_leakage_final",
-                    "request_id": request_id,
-                    "similarity_score": sim,
-                    "leakage_detected": True,
-                },
+    def scan_chunk(self, chunk: str) -> LeakageResult:
+        """
+        Appends the chunk to the sliding window and checks for leakage.
+        """
+        self._position += 1
+        if not chunk or not self._is_ready:
+            return LeakageResult(detected=False, confidence=0.0, leaked_text=None, position=self._position)
+            
+        self._buffer.append(chunk)
+        
+        # Wait until we have at least a few characters to avoid noisy false positives
+        window_text = "".join(self._buffer)
+        if len(window_text) < 20: # Wait for some context before alerting
+             return LeakageResult(detected=False, confidence=0.0, leaked_text=None, position=self._position)
+        
+        try:
+            # Vectorize the current window
+            window_vec = self._vectorizer.transform([window_text])
+            
+            # Compute cosine similarity
+            similarity = cosine_similarity(self._target_vector, window_vec)[0][0]
+            
+            if similarity >= self.config.LEAKAGE_SIMILARITY_THRESHOLD:
+                self.logger.warning(
+                    f"SYSTEM LEAK DETECTED (confidence: {similarity:.3f}): {window_text}"
+                )
+                return LeakageResult(
+                    detected=True,
+                    confidence=float(similarity),
+                    leaked_text=window_text,
+                    position=self._position
+                )
+                
+            return LeakageResult(
+                detected=False,
+                confidence=float(similarity),
+                leaked_text=None,
+                position=self._position
             )
-            error_event = (
-                'data: {"error": {"message": "Security Violation: '
-                'Leakage Detected", "type": "security_violation"}}\n\n'
-            )
-            yield error_event.encode("utf-8")
-            yield b"data: [DONE]\n\n"
+        except Exception as e:
+            self.logger.error(f"Error in output scanner: {e}")
+            return LeakageResult(detected=False, confidence=0.0, leaked_text=None, position=self._position)
+
+    def flush(self):
+        """Resets the scanner state. Should be called when a stream completes or fails."""
+        self._buffer.clear()
+        self._position = 0
