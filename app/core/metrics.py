@@ -47,6 +47,11 @@ class WafMetrics:
         self._semantic_latency_buckets = {1: 0, 2: 0, 5: 0, 10: 0, 50: 0, float('inf'): 0}
         self._semantic_latency_sum: float = 0.0
         self._semantic_latency_count: int = 0
+        
+        # Output Scanner Latency Histogram (Buckets: 0.1ms, 0.5ms, 1ms, 2ms, 5ms, 10ms, +Inf)
+        self._output_scan_latency_buckets = {0.1: 0, 0.5: 0, 1: 0, 2: 0, 5: 0, 10: 0, float('inf'): 0}
+        self._output_scan_latency_sum: float = 0.0
+        self._output_scan_latency_count: int = 0
 
     # ----- Recording Methods -----
 
@@ -97,6 +102,15 @@ class WafMetrics:
                 if latency_ms <= bucket:
                     self._semantic_latency_buckets[bucket] += 1
 
+    def record_output_scan_latency(self, latency_ms: float) -> None:
+        """Record output scanner latency into a histogram."""
+        with self._lock:
+            self._output_scan_latency_sum += latency_ms
+            self._output_scan_latency_count += 1
+            for bucket in [0.1, 0.5, 1, 2, 5, 10, float('inf')]:
+                if latency_ms <= bucket:
+                    self._output_scan_latency_buckets[bucket] += 1
+
     # ----- Query Methods -----
 
     def get_average_latency_ms(self) -> float:
@@ -127,6 +141,9 @@ class WafMetrics:
                 "semantic_latency_buckets": dict(self._semantic_latency_buckets),
                 "semantic_latency_sum": self._semantic_latency_sum,
                 "semantic_latency_count": self._semantic_latency_count,
+                "output_scan_latency_buckets": dict(self._output_scan_latency_buckets),
+                "output_scan_latency_sum": self._output_scan_latency_sum,
+                "output_scan_latency_count": self._output_scan_latency_count,
             }
 
     # ----- Prometheus Exposition -----
@@ -199,6 +216,15 @@ class WafMetrics:
         lines.append(f'promptwaf_semantic_latency_ms_bucket{{le="+Inf"}} {snap["semantic_latency_buckets"][float("inf")]}')
         lines.append(f"promptwaf_semantic_latency_ms_sum {snap['semantic_latency_sum']:.3f}")
         lines.append(f"promptwaf_semantic_latency_ms_count {snap['semantic_latency_count']}")
+        
+        # Output scan latency histogram
+        lines.append("# HELP promptwaf_output_scan_latency_ms Output scan latency in milliseconds.")
+        lines.append("# TYPE promptwaf_output_scan_latency_ms histogram")
+        for bucket in [0.1, 0.5, 1, 2, 5, 10]:
+            lines.append(f'promptwaf_output_scan_latency_ms_bucket{{le="{bucket}"}} {snap["output_scan_latency_buckets"][bucket]}')
+        lines.append(f'promptwaf_output_scan_latency_ms_bucket{{le="+Inf"}} {snap["output_scan_latency_buckets"][float("inf")]}')
+        lines.append(f"promptwaf_output_scan_latency_ms_sum {snap['output_scan_latency_sum']:.3f}")
+        lines.append(f"promptwaf_output_scan_latency_ms_count {snap['output_scan_latency_count']}")
 
         return "\n".join(lines) + "\n"
 
