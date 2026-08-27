@@ -13,7 +13,6 @@ import httpx
 from fastapi import HTTPException
 from fastapi.responses import StreamingResponse
 
-from app.services.output_scanner import scan_streaming_response, scan_response_body
 from app.core.logging_config import get_security_logger
 
 logger = get_security_logger()
@@ -38,48 +37,42 @@ def _build_forward_headers(incoming_headers: dict) -> dict:
     }
 
 
-async def forward_to_openai(
-    payload: dict,
-    headers: dict,
-    request_id: str = "",
-    system_prompt: Optional[str] = None,
-) -> StreamingResponse | dict:
+async def forward_request(messages: list, headers: dict, **kwargs) -> dict:
     """
-    Forward the payload to OpenAI and return the response.
-
-    For streaming requests, the response is piped through the output scanner
-    for leakage detection before being returned to the client.
-
-    Args:
-        payload: The validated request payload.
-        headers: Incoming request headers (for fallback auth).
-        request_id: Unique request ID for tracing.
-        system_prompt: The system prompt for leakage detection.
-
-    Returns:
-        StreamingResponse for SSE, or dict for JSON responses.
+    Forward the non-streaming payload to OpenAI and return the JSON response.
     """
     forward_headers = _build_forward_headers(headers)
-    is_stream = payload.get("stream", False)
-
-    if is_stream:
-        return await _handle_streaming(payload, forward_headers, request_id, system_prompt)
-    else:
-        return await _handle_non_streaming(payload, forward_headers, request_id, system_prompt)
-
-
-async def _handle_streaming(
-    payload: dict,
-    headers: dict,
-    request_id: str,
-    system_prompt: Optional[str],
-) -> StreamingResponse:
-    """Handle streaming (SSE) response with output scanning."""
-
-    async def _upstream_generator() -> AsyncGenerator[bytes, None]:
-        """Stream chunks from OpenAI."""
+    payload = {"messages": messages, "stream": False, **kwargs}
+    
+    try:
         async with httpx.AsyncClient(timeout=OPENAI_TIMEOUT) as client:
-            async with client.stream("POST", OPENAI_API_URL, json=payload, headers=headers) as response:
+            response = await client.post(
+                OPENAI_API_URL, json=payload, headers=forward_headers
+            )
+            response.raise_for_status()
+            return response.json()
+    except httpx.TimeoutException:
+        raise HTTPException(status_code=504, detail={"error": "Gateway Timeout from OpenAI"})
+    except httpx.HTTPStatusError as exc:
+        raise HTTPException(
+            status_code=502, 
+            detail={"error": f"Bad Gateway (OpenAI returned {exc.response.status_code})"}
+        )
+    except Exception as exc:
+        logger.error(f"Upstream forward error: {exc}")
+        raise HTTPException(status_code=500, detail={"error": "Internal Server Error during upstream forward"})
+
+
+async def forward_stream(messages: list, headers: dict, **kwargs) -> AsyncGenerator[bytes, None]:
+    """
+    Forward the streaming payload to OpenAI and yield SSE chunks.
+    """
+    forward_headers = _build_forward_headers(headers)
+    payload = {"messages": messages, "stream": True, **kwargs}
+    
+    try:
+        async with httpx.AsyncClient(timeout=OPENAI_TIMEOUT) as client:
+            async with client.stream("POST", OPENAI_API_URL, json=payload, headers=forward_headers) as response:
                 if response.status_code != 200:
                     error_content = await response.aread()
                     yield error_content
@@ -87,58 +80,10 @@ async def _handle_streaming(
 
                 async for chunk in response.aiter_bytes():
                     yield chunk
-
-    # Wrap the upstream generator with the leakage scanner
-    scanned_generator = scan_streaming_response(
-        upstream_generator=_upstream_generator(),
-        system_prompt=system_prompt,
-        request_id=request_id,
-    )
-
-    return StreamingResponse(
-        scanned_generator,
-        media_type="text/event-stream",
-    )
-
-
-async def _handle_non_streaming(
-    payload: dict,
-    headers: dict,
-    request_id: str,
-    system_prompt: Optional[str],
-) -> dict:
-    """Handle non-streaming JSON response with output scanning."""
-    async with httpx.AsyncClient(timeout=OPENAI_TIMEOUT) as client:
-        response = await client.post(
-            OPENAI_API_URL, json=payload, headers=headers
-        )
-
-    if response.status_code != 200:
-        raise HTTPException(
-            status_code=response.status_code,
-            detail=response.json(),
-        )
-
-    response_data = response.json()
-
-    # Scan for leakage in the response body
-    if scan_response_body(response_data, system_prompt):
-        logger.warning(
-            "Non-streaming response blocked: leakage detected",
-            extra={
-                "event": "response_leakage_blocked",
-                "request_id": request_id,
-                "leakage_detected": True,
-            },
-        )
-        raise HTTPException(
-            status_code=403,
-            detail={
-                "error": {
-                    "message": "Security Violation: Leakage Detected",
-                    "type": "security_violation",
-                }
-            },
-        )
-
-    return response_data
+    except httpx.TimeoutException:
+        yield b'data: {"error": "Gateway Timeout from OpenAI"}\n\n'
+        yield b'data: [DONE]\n\n'
+    except Exception as exc:
+        logger.error(f"Upstream stream error: {exc}")
+        yield b'data: {"error": "Internal Server Error during stream forwarding"}\n\n'
+        yield b'data: [DONE]\n\n'
