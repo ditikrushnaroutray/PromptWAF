@@ -16,3 +16,5 @@ pydantic-settings
 asyncpg
 aiosqlite
 numpy
+prometheus_client
+python-json-logger
