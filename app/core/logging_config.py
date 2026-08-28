@@ -10,49 +10,52 @@ Usage:
 
 import hashlib
 import logging
-import json
 import sys
+from datetime import datetime, timezone
+from typing import Optional
+from pythonjsonlogger import jsonlogger
 from datetime import datetime, timezone
 from typing import Optional
 
 
-class JSONSecurityFormatter(logging.Formatter):
+class JSONSecurityFormatter(jsonlogger.JsonFormatter):
     """
     Formats log records as single-line JSON for structured ingestion
     (ELK, Datadog, CloudWatch, etc.).
     """
 
-    def format(self, record: logging.LogRecord) -> str:
-        log_entry = {
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "level": record.levelname,
-            "logger": record.name,
-            "message": record.getMessage(),
-        }
+    def add_fields(self, log_record, record, message_dict):
+        super(JSONSecurityFormatter, self).add_fields(log_record, record, message_dict)
+        if not log_record.get('timestamp'):
+            log_record['timestamp'] = datetime.now(timezone.utc).isoformat()
+        if log_record.get('level'):
+            log_record['level'] = log_record['level'].upper()
+        else:
+            log_record['level'] = record.levelname
+            
+        log_record['logger'] = record.name
 
-        # Merge extra fields set via `extra={...}` on the log call
+        # Include all custom extra fields
         for key in (
             "request_id", "event", "layer", "reason", "confidence",
             "original_prompt_hash", "original_prompt_preview",
-            "normalized_prompt_preview", "source_ip", "blocked",
+            "normalized_prompt_preview", "source_ip", "user_agent", "blocked",
             "pattern_label", "similarity_score", "leakage_detected",
-            "shadow_mode", "waf_mode", "latency_ms",
+            "shadow_mode", "waf_mode", "latency_ms", "waf_verdict"
         ):
             value = getattr(record, key, None)
             if value is not None:
-                log_entry[key] = value
-
-        return json.dumps(log_entry, default=str)
+                log_record[key] = value
 
 
 def setup_logging() -> None:
     """Configure root and security loggers at startup."""
-    # Root logger — INFO level, structured JSON to stderr
+    # Root logger — INFO level, structured JSON to stdout
     root = logging.getLogger()
     root.setLevel(logging.INFO)
 
-    handler = logging.StreamHandler(sys.stderr)
-    handler.setFormatter(JSONSecurityFormatter())
+    handler = logging.StreamHandler(sys.stdout)
+    handler.setFormatter(JSONSecurityFormatter('%(timestamp)s %(level)s %(name)s %(message)s'))
     root.addHandler(handler)
 
     # Dedicated security logger
@@ -89,6 +92,7 @@ def log_waf_decision(
     original_prompt: str = "",
     normalized_prompt: str = "",
     source_ip: str = "",
+    user_agent: str = "",
     pattern_label: Optional[str] = None,
     similarity_score: Optional[float] = None,
     shadow_mode: bool = False,
@@ -106,6 +110,7 @@ def log_waf_decision(
         event = "request_allowed"
 
     action_label = "MONITORED" if (shadow_mode and blocked) else ("BLOCKED" if blocked else "ALLOWED")
+    waf_verdict = "monitored" if (shadow_mode and blocked) else ("blocked" if blocked else "allowed")
 
     logger.log(
         level,
@@ -119,11 +124,13 @@ def log_waf_decision(
             "blocked": blocked,
             "shadow_mode": shadow_mode,
             "waf_mode": waf_mode,
+            "waf_verdict": waf_verdict,
             "latency_ms": latency_ms,
             "original_prompt_hash": hash_prompt(original_prompt) if original_prompt else None,
             "original_prompt_preview": truncate_for_log(original_prompt) if original_prompt else None,
             "normalized_prompt_preview": truncate_for_log(normalized_prompt) if normalized_prompt else None,
             "source_ip": source_ip,
+            "user_agent": user_agent,
             "pattern_label": pattern_label,
             "similarity_score": similarity_score,
         },
