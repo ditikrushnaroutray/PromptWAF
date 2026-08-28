@@ -18,6 +18,8 @@ from app.core.security import limiter
 from app.core.logging_config import setup_logging, get_security_logger
 from app.core.config import WAF_MODE, WAF_VERSION, REDIS_URL
 from app.core.metrics import waf_metrics
+from prometheus_client import CONTENT_TYPE_LATEST
+import redis.asyncio as redis_async
 
 
 # ---------------------------------------------------------------------------
@@ -158,35 +160,33 @@ async def dashboard(request: Request):
 @app.get("/health")
 async def health():
     """Health check endpoint."""
+    redis_status = "disabled"
+    if REDIS_URL and REDIS_URL.startswith("redis"):
+        try:
+            r = redis_async.Redis.from_url(REDIS_URL, socket_timeout=1.0)
+            await r.ping()
+            redis_status = "connected"
+            await r.aclose()
+        except Exception:
+            redis_status = "degraded"
+    elif REDIS_URL == "memory://":
+        redis_status = "in-memory"
+
     return {
-        "status": "ok",
+        "status": "healthy" if redis_status in ("connected", "in-memory", "disabled") else "degraded",
         "version": WAF_VERSION,
         "waf": "active",
         "mode": WAF_MODE.value,
-        "redis": "connected" if REDIS_URL != "memory://" else "in-memory",
+        "redis": redis_status,
     }
 
 
 @app.get("/metrics")
 async def metrics():
-    """
-    Prometheus-compatible metrics endpoint.
-
-    Exports:
-        - promptwaf_requests_total
-        - promptwaf_blocked_total
-        - promptwaf_monitored_total
-        - promptwaf_allowed_total
-        - promptwaf_errors_total
-        - promptwaf_leakage_total
-        - promptwaf_attacks_by_layer_total{layer="..."}
-        - promptwaf_inspection_latency_avg_ms
-        - promptwaf_inspection_latency_total_ms
-        - promptwaf_inspection_latency_count
-    """
+    """Prometheus-compatible metrics endpoint."""
     return Response(
         content=waf_metrics.to_prometheus(),
-        media_type="text/plain; version=0.0.4; charset=utf-8",
+        media_type=CONTENT_TYPE_LATEST,
     )
 
 
