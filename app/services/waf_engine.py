@@ -115,6 +115,7 @@ class WafEngine:
         heur_start = time.perf_counter()
         heur_verdict = self._check_heuristic(normalized_text)
         latencies["heuristic"] = (time.perf_counter() - heur_start) * 1000.0
+        logger.info("Layer heuristic result", extra={"layer": "heuristic", "blocked": heur_verdict.blocked if heur_verdict else False, "reason": heur_verdict.reason if heur_verdict else "clean"})
         if heur_verdict:
             return self._enrich_verdict(heur_verdict, prompt, normalized_text, latencies)
 
@@ -124,6 +125,7 @@ class WafEngine:
         sem_latency = (time.perf_counter() - sem_start) * 1000.0
         latencies["semantic"] = sem_latency
         waf_metrics.record_semantic_latency(sem_latency)
+        logger.info("Layer semantic result", extra={"layer": "semantic", "blocked": sem_verdict.blocked if sem_verdict else False, "reason": sem_verdict.reason if sem_verdict else "clean"})
         
         if sem_verdict:
             return self._enrich_verdict(sem_verdict, prompt, normalized_text, latencies)
@@ -132,6 +134,7 @@ class WafEngine:
         llm_start = time.perf_counter()
         llm_verdict = await self._check_llm(normalized_text)
         latencies["llm_judge"] = (time.perf_counter() - llm_start) * 1000.0
+        logger.info("Layer llm_judge result", extra={"layer": "llm_judge", "blocked": llm_verdict.blocked if llm_verdict else False, "reason": llm_verdict.reason if llm_verdict else "clean"})
         if llm_verdict:
             return self._enrich_verdict(llm_verdict, prompt, normalized_text, latencies)
 

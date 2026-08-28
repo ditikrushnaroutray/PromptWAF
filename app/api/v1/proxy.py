@@ -147,6 +147,7 @@ async def chat_completions(
     """
     request_id = str(uuid.uuid4())
     source_ip = _get_client_ip(request)
+    user_agent = request.headers.get("user-agent", "")
     is_shadow = WAF_MODE == WafMode.MONITOR
 
     # Track total requests
@@ -276,7 +277,16 @@ async def chat_completions(
         shadow_mode=is_shadow,
         waf_mode=WAF_MODE.value,
         latency_ms=latency_ms,
+        user_agent=user_agent,
     )
+
+    logger.info("request_completed", extra={
+        "request_id": request_id,
+        "waf_verdict": action_label,
+        "latency_ms": latency_ms,
+        "source_ip": source_ip,
+        "user_agent": user_agent,
+    })
 
     # --- 4. Mode-Dependent Action ---
     if verdict.blocked:
